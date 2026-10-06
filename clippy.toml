@@ -1,0 +1,3 @@
+# Clippy configuration for BeatSplit
+# Run: cargo clippy -- -D warnings
+msrv = "1.82.0"

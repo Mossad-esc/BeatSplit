@@ -1,0 +1,18 @@
+[package]
+name = "beatsplit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "On-chain royalty splits for independent artists on Stellar Soroban"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
+[features]
+testutils = ["soroban-sdk/testutils"]

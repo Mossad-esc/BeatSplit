@@ -1,0 +1,6 @@
+[build]
+# Default target for `stellar contract build` (Stellar CLI overrides this)
+# target = "wasm32v1-none"
+
+[target.wasm32v1-none]
+rustflags = ["-C", "target-feature=+multivalue,+mutable-globals,+reference-types,+sign-ext"]

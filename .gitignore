@@ -1,0 +1,27 @@
+# Rust / Cargo
+target/
+Cargo.lock
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Soroban / Stellar
+.stellar/
+*.wasm
+
+# Node / Next.js
+app/node_modules/
+app/.next/
+app/.env.local
+app/.env
+
+# Indexer
+indexer/node_modules/
+indexer/dist/
+
+# OS
+.DS_Store
+Thumbs.db
