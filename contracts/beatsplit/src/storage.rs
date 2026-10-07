@@ -125,11 +125,7 @@ pub fn split_is_active(env: &Env, id: u64) -> bool {
 /// Returns `true` if `addr` has already accepted split `id`.
 pub fn is_accepted(env: &Env, id: u64, addr: &Address) -> bool {
     let key = DataKey::Accepted(id, addr.clone());
-    let accepted: bool = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(false);
+    let accepted: bool = env.storage().persistent().get(&key).unwrap_or(false);
     if accepted {
         env.storage()
             .persistent()
@@ -152,11 +148,7 @@ pub fn set_accepted(env: &Env, id: u64, addr: &Address) {
 /// Returns the current held (claimable) balance for `addr` in split `id`.
 pub fn get_claimable(env: &Env, id: u64, addr: &Address) -> i128 {
     let key = DataKey::Claimable(id, addr.clone());
-    let amount: i128 = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0i128);
+    let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0i128);
     if amount != 0 {
         env.storage()
             .persistent()
@@ -191,11 +183,7 @@ pub fn clear_claimable(env: &Env, id: u64, addr: &Address) {
 /// Returns the lifetime earnings for `addr` in split `id`.
 pub fn get_earned(env: &Env, id: u64, addr: &Address) -> i128 {
     let key = DataKey::Earned(id, addr.clone());
-    let amount: i128 = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(0i128);
+    let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0i128);
     if amount != 0 {
         env.storage()
             .persistent()
@@ -226,9 +214,7 @@ pub fn add_earned(env: &Env, id: u64, addr: &Address, delta: i128) -> Option<i12
 
 /// Returns `true` if there is an open amendment proposal for split `id`.
 pub fn has_proposal(env: &Env, id: u64) -> bool {
-    env.storage()
-        .persistent()
-        .has(&DataKey::Proposal(id))
+    env.storage().persistent().has(&DataKey::Proposal(id))
 }
 
 /// Store an amendment proposal. The value type `T` must implement `IntoVal<Env, Val>`.
@@ -260,7 +246,5 @@ where
 
 /// Remove an amendment proposal (after it is applied or cancelled).
 pub fn remove_proposal(env: &Env, id: u64) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::Proposal(id));
+    env.storage().persistent().remove(&DataKey::Proposal(id));
 }

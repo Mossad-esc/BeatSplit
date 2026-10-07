@@ -8,7 +8,6 @@ use soroban_sdk::contracterror;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Error {
     // ── Recipient / share validation ────────────────────────────────────────
-
     /// The recipient list must contain between 2 and 20 entries (inclusive).
     /// A single-recipient split is not meaningful; more than 20 is unbounded
     /// resource usage.
@@ -28,13 +27,11 @@ pub enum Error {
     DuplicateRecipient = 4,
 
     // ── Deposit / amount validation ─────────────────────────────────────────
-
     /// The deposit or transfer amount must be strictly positive. Zero or
     /// negative amounts are rejected.
     InvalidAmount = 5,
 
     // ── Split lookup / lifecycle ─────────────────────────────────────────────
-
     /// No split with the given `id` exists in storage.
     SplitNotFound = 6,
 
@@ -55,14 +52,12 @@ pub enum Error {
     AlreadyAccepted = 10,
 
     // ── Arithmetic safety ───────────────────────────────────────────────────
-
     /// A checked arithmetic operation (add, multiply) overflowed. This should
     /// be unreachable under normal use with `i128` and bounded recipient counts,
     /// but is always checked defensively.
     Overflow = 11,
 
     // ── Amendment errors ─────────────────────────────────────────────────────
-
     /// An amendment proposal is already open for this split. Only one proposal
     /// can be pending at a time; the current one must be applied or cancelled
     /// first.
@@ -75,13 +70,11 @@ pub enum Error {
     AlreadyApprovedAmendment = 14,
 
     // ── Immutability ─────────────────────────────────────────────────────────
-
     /// The split has been permanently locked. No amendments, status changes,
     /// or other mutations are permitted.
     SplitLocked = 15,
 
     // ── Claim errors ─────────────────────────────────────────────────────────
-
     /// The recipient has no held (claimable) balance for this split.
     NothingToClaim = 16,
 }
