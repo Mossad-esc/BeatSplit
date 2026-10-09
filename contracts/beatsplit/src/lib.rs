@@ -17,10 +17,12 @@ mod test;
 use soroban_sdk::token::Client as TokenClient;
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
 
+use crate::amend::AmendmentProposal;
 use crate::distribute::{compute_shares, payout_or_hold};
 use storage::{
-    bump_instance, clear_claimable, get_claimable as storage_get_claimable,
-    get_earned as storage_get_earned, load_split, next_id, save_split,
+    bump_instance, clear_accepted, clear_claimable, clear_lock_approvals, get_claimable as storage_get_claimable,
+    get_earned as storage_get_earned, is_lock_approved, load_split, next_id, save_split,
+    set_lock_approved, has_proposal, load_proposal, save_proposal, remove_proposal,
 };
 
 #[contract]
@@ -341,6 +343,320 @@ impl BeatSplitContract {
         // ── Interactions: failure-isolated payouts ────────────────────────────
         for (recipient, share) in split.recipients.iter().zip(shares.iter()) {
             payout_or_hold(&env, &token_client, id, &recipient.addr, share);
+        }
+
+        Ok(())
+    }
+
+    /// Propose an amendment to change the recipient list of an active split.
+    ///
+    /// Any current recipient can propose a new recipient list. Only one proposal
+    /// can be open at a time. The proposal must be approved by all current
+    /// recipients before it takes effect.
+    ///
+    /// # Authorization
+    /// Requires `proposer` to authorise this call. `proposer` must be a current
+    /// recipient of the split.
+    ///
+    /// # Validation
+    /// * Split must exist and be Active (not Pending or Locked).
+    /// * Proposer must be a current recipient.
+    /// * No other amendment proposal can be open.
+    /// * New recipient list must pass the same validation as create_split (2-20
+    ///   recipients, positive bps, no duplicates, sum = 10,000).
+    ///
+    /// # Errors
+    /// * `SplitNotFound` — no split with this id.
+    /// * `SplitLocked` — split is locked and cannot be amended.
+    /// * `NotActive` — split is not Active (Pending or Locked).
+    /// * `NotARecipient` — proposer is not a current recipient.
+    /// * `AmendmentAlreadyOpen` — another proposal is already pending.
+    /// * `InvalidRecipientCount` / `ZeroShare` / `DuplicateRecipient` /
+    ///   `BpsTotalInvalid` — validation errors on the new recipient list.
+    pub fn propose_amendment(
+        env: Env,
+        id: u64,
+        proposer: Address,
+        new_recipients: Vec<Recipient>,
+    ) -> Result<(), Error> {
+        // ── Auth ──────────────────────────────────────────────────────────────
+        proposer.require_auth();
+
+        bump_instance(&env);
+
+        // ── Load split ────────────────────────────────────────────────────────
+        let split = load_split(&env, id).ok_or(Error::SplitNotFound)?;
+
+        // ── Status guards ──────────────────────────────────────────────────────
+        if split.status == SplitStatus::Locked {
+            return Err(Error::SplitLocked);
+        }
+        if split.status != SplitStatus::Active {
+            return Err(Error::NotActive);
+        }
+
+        // ── Proposer must be a current recipient ───────────────────────────────
+        let is_recipient = split.recipients.iter().any(|r| r.addr == proposer);
+        if !is_recipient {
+            return Err(Error::NotARecipient);
+        }
+
+        // ── No open proposal allowed ───────────────────────────────────────────
+        if storage::has_proposal(&env, id) {
+            return Err(Error::AmendmentAlreadyOpen);
+        }
+
+        // ── Validate new recipient list (same rules as create_split) ────────────
+        let count = new_recipients.len();
+        if !(2..=20).contains(&count) {
+            return Err(Error::InvalidRecipientCount);
+        }
+
+        let mut bps_sum: u32 = 0;
+        for i in 0..count {
+            let r = new_recipients.get(i).unwrap();
+
+            if r.bps == 0 {
+                return Err(Error::ZeroShare);
+            }
+
+            for j in 0..i {
+                if new_recipients.get(j).unwrap().addr == r.addr {
+                    return Err(Error::DuplicateRecipient);
+                }
+            }
+
+            bps_sum = bps_sum.checked_add(r.bps).ok_or(Error::Overflow)?;
+        }
+
+        if bps_sum != 10_000 {
+            return Err(Error::BpsTotalInvalid);
+        }
+
+        // ── Create and store proposal ──────────────────────────────────────────
+        let proposal = AmendmentProposal {
+            split_id: id,
+            proposer: proposer.clone(),
+            new_recipients,
+            approvals: Vec::new(&env),
+            base_version: split.version,
+        };
+
+        save_proposal(&env, id, &proposal);
+
+        // ── Emit event ────────────────────────────────────────────────────────
+        events::amendment_proposed(&env, id, &proposer);
+
+        Ok(())
+    }
+
+    /// Approve the current amendment proposal for a split.
+    ///
+    /// Each current recipient must approve the proposal. When all recipients have
+    /// approved, the amendment is automatically applied: the recipient list is
+    /// updated, the split version is incremented, and the proposal is removed.
+    ///
+    /// # Authorization
+    /// Requires `approver` to authorise this call. `approver` must be a current
+    /// recipient of the split.
+    ///
+    /// # Errors
+    /// * `SplitNotFound` — no split with this id.
+    /// * `SplitLocked` — split is locked.
+    /// * `NoOpenAmendment` — no proposal is open for this split.
+    /// * `NotARecipient` — approver is not a current recipient.
+    /// * `AlreadyApprovedAmendment` — approver has already approved this proposal.
+    pub fn approve_amendment(env: Env, id: u64, approver: Address) -> Result<(), Error> {
+        // ── Auth ──────────────────────────────────────────────────────────────
+        approver.require_auth();
+
+        bump_instance(&env);
+
+        // ── Load split ────────────────────────────────────────────────────────
+        let mut split = load_split(&env, id).ok_or(Error::SplitNotFound)?;
+
+        // ── Status guards ──────────────────────────────────────────────────────
+        if split.status == SplitStatus::Locked {
+            return Err(Error::SplitLocked);
+        }
+
+        // ── Must have an open proposal ────────────────────────────────────────
+        let mut proposal = storage::load_proposal::<AmendmentProposal>(&env, id)
+            .ok_or(Error::NoOpenAmendment)?;
+
+        // ── Approver must be a current recipient ───────────────────────────────
+        let is_recipient = split.recipients.iter().any(|r| r.addr == approver);
+        if !is_recipient {
+            return Err(Error::NotARecipient);
+        }
+
+        // ── Check if already approved ──────────────────────────────────────────
+        if proposal.has_approved(&approver) {
+            return Err(Error::AlreadyApprovedAmendment);
+        }
+
+        // ── Check if proposal is stale (split version changed) ─────────────────
+        if proposal.base_version != split.version {
+            // Proposal is stale, remove it and reject
+            storage::remove_proposal(&env, id);
+            return Err(Error::NoOpenAmendment);
+        }
+
+        // ── Add approval ───────────────────────────────────────────────────────
+        proposal.add_approval(approver.clone());
+        storage::save_proposal(&env, id, &proposal);
+
+        // ── Emit event ────────────────────────────────────────────────────────
+        events::amendment_approved(&env, id, &approver);
+
+        // ── Check if all recipients have approved ──────────────────────────────
+        if proposal.is_fully_approved(&split.recipients) {
+            // Apply the amendment
+            Self::apply_amendment(&env, &mut split, &mut proposal, id);
+        }
+
+        Ok(())
+    }
+
+    /// Internal: apply an approved amendment.
+    ///
+    /// Updates the split's recipient list, increments version, clears acceptance
+    /// flags for new recipients, and removes the proposal.
+    fn apply_amendment(
+        env: &Env,
+        split: &mut Split,
+        proposal: &mut AmendmentProposal,
+        id: u64,
+    ) {
+        // Update recipients
+        split.recipients = proposal.new_recipients.clone();
+        // Increment version
+        split.version = split.version.checked_add(1).unwrap();
+        // Save updated split
+        save_split(env, split);
+
+        // Clear acceptance flags for all recipients (new and old)
+        // This requires all recipients to re-accept the new terms
+        for recipient in split.recipients.iter() {
+            clear_accepted(env, id, &recipient.addr);
+        }
+
+        // Remove proposal
+        storage::remove_proposal(env, id);
+
+        // Emit event
+        events::amendment_applied(env, id, split.version);
+    }
+
+    /// Cancel an open amendment proposal.
+    ///
+    /// Any current recipient can cancel the proposal. This removes the proposal
+    /// and allows a new one to be created.
+    ///
+    /// # Authorization
+    /// Requires `canceller` to authorise this call. `canceller` must be a current
+    /// recipient of the split.
+    ///
+    /// # Errors
+    /// * `SplitNotFound` — no split with this id.
+    /// * `SplitLocked` — split is locked.
+    /// * `NoOpenAmendment` — no proposal is open for this split.
+    /// * `NotARecipient` — canceller is not a current recipient.
+    pub fn cancel_amendment(env: Env, id: u64, canceller: Address) -> Result<(), Error> {
+        // ── Auth ──────────────────────────────────────────────────────────────
+        canceller.require_auth();
+
+        bump_instance(&env);
+
+        // ── Load split ────────────────────────────────────────────────────────
+        let split = load_split(&env, id).ok_or(Error::SplitNotFound)?;
+
+        // ── Status guard ───────────────────────────────────────────────────────
+        if split.status == SplitStatus::Locked {
+            return Err(Error::SplitLocked);
+        }
+
+        // ── Must have an open proposal ────────────────────────────────────────
+        if !storage::has_proposal(&env, id) {
+            return Err(Error::NoOpenAmendment);
+        }
+
+        // ── Canceller must be a current recipient ──────────────────────────────
+        let is_recipient = split.recipients.iter().any(|r| r.addr == canceller);
+        if !is_recipient {
+            return Err(Error::NotARecipient);
+        }
+
+        // ── Remove proposal ────────────────────────────────────────────────────
+        storage::remove_proposal(&env, id);
+
+        // ── Emit event ────────────────────────────────────────────────────────
+        events::amendment_cancelled(&env, id, &canceller);
+
+        Ok(())
+    }
+
+    /// Approve locking a split.
+    ///
+    /// Each current recipient must call this to approve locking the split.
+    /// When all recipients have approved, the split is automatically locked.
+    ///
+    /// # Authorization
+    /// Requires `approver` to authorise this call. `approver` must be a current
+    /// recipient of the split.
+    ///
+    /// # Errors
+    /// * `SplitNotFound` — no split with this id.
+    /// * `SplitLocked` — split is already locked.
+    /// * `NotActive` — split is not Active (must be Active to lock).
+    /// * `NotARecipient` — approver is not a current recipient.
+    pub fn approve_lock(env: Env, id: u64, approver: Address) -> Result<(), Error> {
+        // ── Auth ──────────────────────────────────────────────────────────────
+        approver.require_auth();
+
+        bump_instance(&env);
+
+        // ── Load split ────────────────────────────────────────────────────────
+        let mut split = load_split(&env, id).ok_or(Error::SplitNotFound)?;
+
+        // ── Status guards ──────────────────────────────────────────────────────
+        if split.status == SplitStatus::Locked {
+            return Err(Error::SplitLocked);
+        }
+        if split.status != SplitStatus::Active {
+            return Err(Error::NotActive);
+        }
+
+        // ── Approver must be a current recipient ───────────────────────────────
+        let is_recipient = split.recipients.iter().any(|r| r.addr == approver);
+        if !is_recipient {
+            return Err(Error::NotARecipient);
+        }
+
+        // ── Check if already approved ──────────────────────────────────────────
+        if is_lock_approved(&env, id, &approver) {
+            return Err(Error::AlreadyApprovedAmendment); // Reuse error for "already approved"
+        }
+
+        // ── Record approval ────────────────────────────────────────────────────
+        set_lock_approved(&env, id, &approver);
+
+        // ── Check if all recipients have approved ──────────────────────────────
+        let all_approved = split
+            .recipients
+            .iter()
+            .all(|r| is_lock_approved(&env, id, &r.addr));
+
+        if all_approved {
+            // Lock the split
+            split.status = SplitStatus::Locked;
+            save_split(&env, &split);
+
+            // Clear lock approvals
+            clear_lock_approvals(&env, id, &split.recipients);
+
+            // Emit event
+            events::locked(&env, id);
         }
 
         Ok(())
