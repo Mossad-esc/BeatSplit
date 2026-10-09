@@ -1691,3 +1691,196 @@ fn approve_amendment_stale_proposal_rejected() {
     // The stale proposal check happens when base_version != split.version
     // This is tested indirectly through the version increment
 }
+
+// ── Additional amendment/lock edge case tests ──────────────────────────────────────
+
+#[test]
+fn amendment_preserves_claimable_balances() {
+    let (env, client) = setup();
+    let creator = Address::generate(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    let (token_addr, _token_client) = setup_token(&env, &creator, &payer, 1_000_000_000);
+
+    let id = client.create_split(
+        &creator,
+        &token_addr,
+        &recipients(&env, &[(a.clone(), 5000), (b.clone(), 5000)]),
+        &fake_hash(&env, 1),
+    );
+
+    client.accept(&id, &a);
+    client.accept(&id, &b);
+
+    // Deposit some funds
+    client.deposit(&id, &payer, &100_000_000i128);
+
+    // Now amend to add a new recipient
+    client.propose_amendment(
+        &id,
+        &a,
+        &recipients(
+            &env,
+            &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)],
+        ),
+    );
+    client.approve_amendment(&id, &a);
+    client.approve_amendment(&id, &b);
+
+    // Original recipients should keep their earned balances
+    assert_eq!(client.get_earned(&id, &a), 50_000_000);
+    assert_eq!(client.get_earned(&id, &b), 50_000_000);
+    assert_eq!(client.get_earned(&id, &c), 0);
+
+    // New deposits should use new split
+    client.deposit(&id, &payer, &100_000_000i128);
+    assert_eq!(client.get_earned(&id, &a), 50_000_000 + 40_000_000);
+    assert_eq!(client.get_earned(&id, &b), 50_000_000 + 30_000_000);
+    assert_eq!(client.get_earned(&id, &c), 30_000_000);
+}
+
+#[test]
+fn multiple_amendments_increment_version() {
+    let (env, client) = setup();
+    let creator = Address::generate(&env);
+    let token = Address::generate(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    let d = Address::generate(&env);
+
+    let id = client.create_split(
+        &creator,
+        &token,
+        &recipients(&env, &[(a.clone(), 5000), (b.clone(), 5000)]),
+        &fake_hash(&env, 1),
+    );
+
+    client.accept(&id, &a);
+    client.accept(&id, &b);
+
+    // First amendment
+    client.propose_amendment(
+        &id,
+        &a,
+        &recipients(&env, &[(a.clone(), 4000), (b.clone(), 6000)]),
+    );
+    client.approve_amendment(&id, &a);
+    client.approve_amendment(&id, &b);
+
+    let split = client.get_split(&id).unwrap();
+    assert_eq!(split.version, 2);
+
+    // Second amendment (after first is applied, can propose again)
+    client.propose_amendment(
+        &id,
+        &a,
+        &recipients(
+            &env,
+            &[(a.clone(), 3000), (b.clone(), 3000), (c.clone(), 4000)],
+        ),
+    );
+    client.approve_amendment(&id, &a);
+    client.approve_amendment(&id, &b);
+
+    let split = client.get_split(&id).unwrap();
+    assert_eq!(split.version, 3);
+
+    // Third amendment - now there are 3 recipients (a, b, c), so all 3 must approve
+    client.propose_amendment(
+        &id,
+        &a,
+        &recipients(
+            &env,
+            &[
+                (a.clone(), 2000),
+                (b.clone(), 2000),
+                (c.clone(), 3000),
+                (d.clone(), 3000),
+            ],
+        ),
+    );
+    client.approve_amendment(&id, &a);
+    client.approve_amendment(&id, &b);
+    client.approve_amendment(&id, &c);
+
+    let split = client.get_split(&id).unwrap();
+    assert_eq!(split.version, 4);
+}
+
+#[test]
+fn cancel_amendment_allows_new_proposal() {
+    let (env, client) = setup();
+    let creator = Address::generate(&env);
+    let token = Address::generate(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    let id = client.create_split(
+        &creator,
+        &token,
+        &recipients(&env, &[(a.clone(), 5000), (b.clone(), 5000)]),
+        &fake_hash(&env, 1),
+    );
+
+    client.accept(&id, &a);
+    client.accept(&id, &b);
+
+    // Propose and cancel
+    client.propose_amendment(
+        &id,
+        &a,
+        &recipients(&env, &[(a.clone(), 4000), (b.clone(), 6000)]),
+    );
+    client.cancel_amendment(&id, &b);
+
+    // Should be able to propose again
+    client.propose_amendment(
+        &id,
+        &b,
+        &recipients(&env, &[(a.clone(), 6000), (b.clone(), 4000)]),
+    );
+    client.approve_amendment(&id, &a);
+    client.approve_amendment(&id, &b);
+
+    let split = client.get_split(&id).unwrap();
+    assert_eq!(split.version, 2);
+    let r0 = split.recipients.get(0).unwrap();
+    let r1 = split.recipients.get(1).unwrap();
+    assert_eq!(r0.bps, 6000);
+    assert_eq!(r1.bps, 4000);
+}
+
+#[test]
+fn approve_lock_clears_approvals_on_lock() {
+    let (env, client) = setup();
+    let creator = Address::generate(&env);
+    let token = Address::generate(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    let id = client.create_split(
+        &creator,
+        &token,
+        &recipients(&env, &[(a.clone(), 5000), (b.clone(), 5000)]),
+        &fake_hash(&env, 1),
+    );
+
+    client.accept(&id, &a);
+    client.accept(&id, &b);
+
+    // Approve lock
+    client.approve_lock(&id, &a);
+    client.approve_lock(&id, &b);
+
+    // Split should be locked
+    let split = client.get_split(&id).unwrap();
+    assert!(matches!(split.status, SplitStatus::Locked));
+
+    // Trying to approve again should fail with SplitLocked
+    let err = client.try_approve_lock(&id, &a).unwrap_err().unwrap();
+    assert_eq!(err, Error::SplitLocked);
+}
