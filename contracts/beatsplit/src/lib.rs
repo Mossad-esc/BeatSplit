@@ -20,9 +20,10 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
 use crate::amend::AmendmentProposal;
 use crate::distribute::{compute_shares, payout_or_hold};
 use storage::{
-    bump_instance, clear_accepted, clear_claimable, clear_lock_approvals, get_claimable as storage_get_claimable,
-    get_earned as storage_get_earned, is_lock_approved, load_split, next_id, save_split,
-    set_lock_approved, has_proposal, load_proposal, save_proposal, remove_proposal,
+    bump_instance, clear_accepted, clear_claimable, clear_lock_approvals,
+    get_claimable as storage_get_claimable, get_earned as storage_get_earned, has_proposal,
+    is_lock_approved, load_proposal, load_split, next_id, remove_proposal, save_proposal,
+    save_split, set_lock_approved,
 };
 
 #[contract]
@@ -481,8 +482,8 @@ impl BeatSplitContract {
         }
 
         // ── Must have an open proposal ────────────────────────────────────────
-        let mut proposal = storage::load_proposal::<AmendmentProposal>(&env, id)
-            .ok_or(Error::NoOpenAmendment)?;
+        let mut proposal =
+            storage::load_proposal::<AmendmentProposal>(&env, id).ok_or(Error::NoOpenAmendment)?;
 
         // ── Approver must be a current recipient ───────────────────────────────
         let is_recipient = split.recipients.iter().any(|r| r.addr == approver);
@@ -522,12 +523,7 @@ impl BeatSplitContract {
     ///
     /// Updates the split's recipient list, increments version, clears acceptance
     /// flags for new recipients, and removes the proposal.
-    fn apply_amendment(
-        env: &Env,
-        split: &mut Split,
-        proposal: &mut AmendmentProposal,
-        id: u64,
-    ) {
+    fn apply_amendment(env: &Env, split: &mut Split, proposal: &mut AmendmentProposal, id: u64) {
         // Update recipients
         split.recipients = proposal.new_recipients.clone();
         // Increment version

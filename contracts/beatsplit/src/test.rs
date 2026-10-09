@@ -928,7 +928,10 @@ fn propose_amendment_happy_path() {
     client.propose_amendment(
         &id,
         &a,
-        &recipients(&env, &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)]),
+        &recipients(
+            &env,
+            &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)],
+        ),
     );
 
     // Verify proposal exists
@@ -1082,11 +1085,7 @@ fn propose_amendment_rejects_invalid_recipient_count() {
 
     // Single recipient
     let err = client
-        .try_propose_amendment(
-            &id,
-            &a,
-            &recipients(&env, &[(a.clone(), 10000)]),
-        )
+        .try_propose_amendment(&id, &a, &recipients(&env, &[(a.clone(), 10000)]))
         .unwrap_err()
         .unwrap();
 
@@ -1212,7 +1211,10 @@ fn approve_amendment_happy_path_applies_when_all_approve() {
     client.propose_amendment(
         &id,
         &a,
-        &recipients(&env, &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)]),
+        &recipients(
+            &env,
+            &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)],
+        ),
     );
 
     // First approval (a)
@@ -1228,7 +1230,7 @@ fn approve_amendment_happy_path_applies_when_all_approve() {
 
     // But wait - c is a new recipient and hasn't approved!
     // The current logic checks against CURRENT recipients, not proposed.
-    // Let me check the implementation... 
+    // Let me check the implementation...
     // Actually, the current implementation checks is_fully_approved against current recipients.
     // So with 2 current recipients, once both approve, it applies.
     // This means c doesn't need to approve since they weren't a recipient before.
@@ -1237,7 +1239,7 @@ fn approve_amendment_happy_path_applies_when_all_approve() {
     let split = client.get_split(&id).unwrap();
     assert_eq!(split.version, 2); // version incremented
     assert_eq!(split.recipients.len(), 3); // new recipient list
-    // Check new recipients
+                                           // Check new recipients
     let r0 = split.recipients.get(0).unwrap();
     let r1 = split.recipients.get(1).unwrap();
     let r2 = split.recipients.get(2).unwrap();
@@ -1271,7 +1273,10 @@ fn approve_amendment_rejects_non_recipient() {
         &recipients(&env, &[(a.clone(), 4000), (b.clone(), 6000)]),
     );
 
-    let err = client.try_approve_amendment(&id, &outsider).unwrap_err().unwrap();
+    let err = client
+        .try_approve_amendment(&id, &outsider)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, Error::NotARecipient);
 }
 
@@ -1413,7 +1418,10 @@ fn cancel_amendment_rejects_non_recipient() {
         &recipients(&env, &[(a.clone(), 4000), (b.clone(), 6000)]),
     );
 
-    let err = client.try_cancel_amendment(&id, &outsider).unwrap_err().unwrap();
+    let err = client
+        .try_cancel_amendment(&id, &outsider)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, Error::NotARecipient);
 }
 
@@ -1534,7 +1542,10 @@ fn lock_rejects_non_recipient() {
     client.accept(&id, &a);
     client.accept(&id, &b);
 
-    let err = client.try_approve_lock(&id, &outsider).unwrap_err().unwrap();
+    let err = client
+        .try_approve_lock(&id, &outsider)
+        .unwrap_err()
+        .unwrap();
     assert_eq!(err, Error::NotARecipient);
 }
 
@@ -1565,7 +1576,10 @@ fn deposit_after_amendment_uses_new_recipients() {
     client.propose_amendment(
         &id,
         &a,
-        &recipients(&env, &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)]),
+        &recipients(
+            &env,
+            &[(a.clone(), 4000), (b.clone(), 3000), (c.clone(), 3000)],
+        ),
     );
     client.approve_amendment(&id, &a);
     client.approve_amendment(&id, &b);
