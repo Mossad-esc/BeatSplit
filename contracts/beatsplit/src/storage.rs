@@ -14,9 +14,9 @@
 //! a single call to bump covers a long runway. These numbers are conservative
 //! for the MVP; the TTL keeper can extend further.
 
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, Vec};
 
-use crate::types::{Split, SplitStatus};
+use crate::types::{Recipient, Split, SplitStatus};
 
 // ── TTL constants ────────────────────────────────────────────────────────────
 
@@ -47,6 +47,8 @@ enum DataKey {
     Split(u64),
     /// `Accepted(id, addr)` → `bool`. Whether `addr` has accepted split `id`.
     Accepted(u64, Address),
+    /// `LockApproved(id, addr)` → `bool`. Whether `addr` has approved locking split `id`.
+    LockApproved(u64, Address),
     /// `Claimable(id, addr)` → `i128`. Held balance for `addr` in split `id`.
     Claimable(u64, Address),
     /// `Earned(id, addr)` → `i128`. Lifetime earnings for `addr` in split `id`.
@@ -141,6 +143,41 @@ pub fn set_accepted(env: &Env, id: u64, addr: &Address) {
     env.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+}
+
+/// Clear the acceptance flag for `addr` in split `id` (used when amendment applied).
+pub fn clear_accepted(env: &Env, id: u64, addr: &Address) {
+    let key = DataKey::Accepted(id, addr.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Record that `addr` has approved locking split `id`.
+pub fn set_lock_approved(env: &Env, id: u64, addr: &Address) {
+    let key = DataKey::LockApproved(id, addr.clone());
+    env.storage().persistent().set(&key, &true);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+}
+
+/// Check if `addr` has approved locking split `id`.
+pub fn is_lock_approved(env: &Env, id: u64, addr: &Address) -> bool {
+    let key = DataKey::LockApproved(id, addr.clone());
+    let approved: bool = env.storage().persistent().get(&key).unwrap_or(false);
+    if approved {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+    }
+    approved
+}
+
+/// Clear all lock approvals for split `id`.
+pub fn clear_lock_approvals(env: &Env, id: u64, recipients: &Vec<Recipient>) {
+    for recipient in recipients.iter() {
+        let key = DataKey::LockApproved(id, recipient.addr.clone());
+        env.storage().persistent().remove(&key);
+    }
 }
 
 // ── Claimable balance ─────────────────────────────────────────────────────────
