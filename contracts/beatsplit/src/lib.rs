@@ -21,9 +21,8 @@ use crate::amend::AmendmentProposal;
 use crate::distribute::{compute_shares, payout_or_hold};
 use storage::{
     bump_instance, clear_accepted, clear_claimable, clear_lock_approvals,
-    get_claimable as storage_get_claimable, get_earned as storage_get_earned, has_proposal,
-    is_lock_approved, load_proposal, load_split, next_id, remove_proposal, save_proposal,
-    save_split, set_lock_approved,
+    get_claimable as storage_get_claimable, get_earned as storage_get_earned,
+    is_lock_approved, load_split, next_id, save_proposal, save_split, set_lock_approved,
 };
 
 #[contract]
