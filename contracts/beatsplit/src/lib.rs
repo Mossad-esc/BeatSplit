@@ -21,8 +21,9 @@ use crate::amend::AmendmentProposal;
 use crate::distribute::{compute_shares, payout_or_hold};
 use storage::{
     bump_instance, clear_accepted, clear_claimable, clear_lock_approvals,
-    get_claimable as storage_get_claimable, get_earned as storage_get_earned,
-    is_lock_approved, load_split, next_id, save_proposal, save_split, set_lock_approved,
+    extend_ttl as storage_extend_ttl, get_claimable as storage_get_claimable,
+    get_earned as storage_get_earned, is_lock_approved, load_split, next_id,
+    save_proposal, save_split, set_lock_approved,
 };
 
 #[contract]
@@ -630,7 +631,7 @@ impl BeatSplitContract {
 
         // ── Check if already approved ──────────────────────────────────────────
         if is_lock_approved(&env, id, &approver) {
-            return Err(Error::AlreadyApprovedAmendment); // Reuse error for "already approved"
+            return Err(Error::AlreadyApprovedAmendment);
         }
 
         // ── Record approval ────────────────────────────────────────────────────
@@ -655,5 +656,17 @@ impl BeatSplitContract {
         }
 
         Ok(())
+    }
+
+    /// Extend the TTL for all persistent entries associated with a split.
+    ///
+    /// This is a keeper-friendly function that anyone can call to bump the TTL
+    /// for a split and its related entries (acceptances, claimable balances,
+    /// earned totals, lock approvals, and any open proposal). No auth required,
+    /// no state change beyond TTL extension.
+    ///
+    /// Returns the number of entries that were extended.
+    pub fn extend_ttl(env: Env, id: u64) -> u32 {
+        storage_extend_ttl(&env, id)
     }
 }

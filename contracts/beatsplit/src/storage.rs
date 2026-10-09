@@ -285,3 +285,72 @@ where
 pub fn remove_proposal(env: &Env, id: u64) {
     env.storage().persistent().remove(&DataKey::Proposal(id));
 }
+
+/// Extend TTL for all persistent entries associated with a split.
+///
+/// This is a keeper-friendly function that anyone can call to bump the TTL
+/// for a split and its related entries (acceptances, claimable balances,
+/// earned totals, lock approvals, and any open proposal). No auth required,
+/// no state change beyond TTL extension.
+///
+/// Returns the number of entries that were extended.
+pub fn extend_ttl(env: &Env, id: u64) -> u32 {
+    let mut count: u32 = 0;
+
+    let split_key = DataKey::Split(id);
+    if env.storage().persistent().has(&split_key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&split_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+        count += 1;
+    }
+
+    let proposal_key = DataKey::Proposal(id);
+    if env.storage().persistent().has(&proposal_key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&proposal_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+        count += 1;
+    }
+
+    let split = load_split(env, id);
+    if let Some(s) = split {
+        for recipient in s.recipients.iter() {
+            let addr = recipient.addr.clone();
+
+            let accepted_key = DataKey::Accepted(id, addr.clone());
+            if env.storage().persistent().has(&accepted_key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&accepted_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+                count += 1;
+            }
+
+            let claimable_key = DataKey::Claimable(id, addr.clone());
+            if env.storage().persistent().has(&claimable_key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&claimable_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+                count += 1;
+            }
+
+            let earned_key = DataKey::Earned(id, addr.clone());
+            if env.storage().persistent().has(&earned_key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&earned_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+                count += 1;
+            }
+
+            let lock_key = DataKey::LockApproved(id, addr);
+            if env.storage().persistent().has(&lock_key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&lock_key, PERSISTENT_BUMP_THRESHOLD, PERSISTENT_BUMP_TO);
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
